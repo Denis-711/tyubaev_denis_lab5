@@ -1,199 +1,161 @@
-from random import randrange as rnd, choice
-import tkinter as tk
-import math
-import time
+import pygame as pg
+import numpy as np
+from random import randint
 
-# print (dir(math))
+SCREEN_SIZE = (800, 600)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
 
-root = tk.Tk()
-fr = tk.Frame(root)
-root.geometry('800x600')
-canv = tk.Canvas(root, bg='white')
-canv.pack(fill=tk.BOTH, expand=1)
+pg.init()
 
 
-class ball():
-    def __init__(self, x=40, y=450):
-        """ Конструктор класса ball
+class Ball():
+    def __init__(self, coord, vel, rad=15, color=None):
+        if color == None:
+            color = (randint(0, 255), randint(0, 255), randint(0, 255))
+        self.color = color
+        self.coord = coord
+        self.vel = vel
+        self.rad = rad
+        self.is_alive = True
 
-        Args:
-        x - начальное положение мяча по горизонтали
-        y - начальное положение мяча по вертикали
-        """
-        self.x = x
-        self.y = y
-        self.r = 10
-        self.vx = 0
-        self.vy = 0
-        self.color = choice(['blue', 'green', 'red', 'brown'])
-        self.id = canv.create_oval(
-                self.x - self.r,
-                self.y - self.r,
-                self.x + self.r,
-                self.y + self.r,
-                fill=self.color
-        )
-        self.live = 30
+    def draw(self, screen):
+        pg.draw.circle(screen, self.color, self.coord, self.rad)
 
-    def set_coords(self):
-        canv.coords(
-                self.id,
-                self.x - self.r,
-                self.y - self.r,
-                self.x + self.r,
-                self.y + self.r
-        )
+    def move(self, t_step=1., g=2.):
+        self.vel[1] += int(g * t_step)
+        for i in range(2):
+            self.coord[i] += int(self.vel[i] * t_step)
+        self.check_walls()
+        if self.vel[0]**2 + self.vel[1]**2 < 2**2 and self.coord[1] > SCREEN_SIZE[1] - 2*self.rad:
+               self.is_alive = False
+
+    def check_walls(self):
+        n = [[1, 0], [0, 1]]
+        for i in range(2):
+            if self.coord[i] < self.rad:
+                self.coord[i] = self.rad
+                self.flip_vel(n[i], 0.8, 0.9)
+            elif self.coord[i] > SCREEN_SIZE[i] - self.rad:
+                self.coord[i] = SCREEN_SIZE[i] - self.rad
+                self.flip_vel(n[i], 0.8, 0.9)
+
+    def flip_vel(self, axis, coef_perp=1., coef_par=1.):
+        vel = np.array(self.vel)
+        n = np.array(axis)
+        n = n / np.linalg.norm(n)
+        vel_perp = vel.dot(n) * n
+        vel_par = vel - vel_perp
+        ans = -vel_perp * coef_perp + vel_par * coef_par
+        self.vel = ans.astype(np.int).tolist()
+
+
+class Table():
+    pass
+
+class Gun():
+    def __init__(self, coord=[30, SCREEN_SIZE[1]//2], 
+                 min_pow=20, max_pow=50):
+        self.coord = coord
+        self.angle = 0
+        self.min_pow = min_pow
+        self.max_pow = max_pow
+        self.power = min_pow
+        self.active = False
+
+    def draw(self, screen):
+        end_pos = [self.coord[0] + self.power*np.cos(self.angle), 
+                   self.coord[1] + self.power*np.sin(self.angle)]
+        pg.draw.line(screen, RED, self.coord, end_pos, 5)
+
+    def strike(self):
+        vel = [int(self.power * np.cos(self.angle)), int(self.power * np.sin(self.angle))]
+        self.active = False
+        self.power = self.min_pow
+        return Ball(list(self.coord), vel)
+        
+    def move(self):
+        if self.active and self.power < self.max_pow:
+            self.power += 1
+
+    def set_angle(self, mouse_pos):
+        self.angle = np.arctan2(mouse_pos[1] - self.coord[1], 
+                                mouse_pos[0] - self.coord[0])
+
+
+class Target():
+    pass
+
+
+class Manager():
+    def __init__(self):
+        self.gun = Gun()
+        self.table = Table()
+        self.balls = []
+    
+    def process(self, events, screen):
+        done = self.handle_events(events)
+        self.move()
+        self.draw(screen)
+        self.check_alive()
+        return done
+
+    def draw(self, screen):
+        screen.fill(BLACK)
+        for ball in self.balls:
+            ball.draw(screen)
+        self.gun.draw(screen)
 
     def move(self):
-        """Переместить мяч по прошествии единицы времени.
+        for ball in self.balls:
+            ball.move()
+        self.gun.move()
 
-        Метод описывает перемещение мяча за один кадр перерисовки. То есть, обновляет значения
-        self.x и self.y с учетом скоростей self.vx и self.vy, силы гравитации, действующей на мяч,
-        и стен по краям окна (размер окна 800х600).
-        """
-        self.id = canv.create_oval(
-                self.x - self.r,
-                self.y - self.r,
-                self.x + self.r,
-                self.y + self.r,
-                fill= 'white',
-                outline = 'white'
-                )
+    def check_alive(self):
+        dead_balls = []
+        for i, ball in enumerate(self.balls):
+            if not ball.is_alive:
+                dead_balls.append(i)
+
+        for i in reversed(dead_balls):
+            self.balls.pop(i)
+    
+    def handle_events(self, events):
+        done = False
+        for event in events:
+            if event.type == pg.QUIT:
+                done = True
+            elif event.type == pg.KEYDOWN:
+                if event.key == pg.K_UP:
+                    self.gun.coord[1] -= 5
+                elif event.key == pg.K_DOWN:
+                    self.gun.coord[1] += 5
+            elif event.type == pg.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    self.gun.active = True
+            elif event.type == pg.MOUSEBUTTONUP:
+                if event.button == 1:
+                    self.balls.append(self.gun.strike())
         
-        self.vy -= 2
-        self.x += self.vx
-        self.y -= self.vy
-        
-        self.id = canv.create_oval(
-                self.x - self.r,
-                self.y - self.r,
-                self.x + self.r,
-                self.y + self.r,
-                fill=self.color
-                )
+        if pg.mouse.get_focused():
+            mouse_pos = pg.mouse.get_pos()
+            self.gun.set_angle(mouse_pos)
 
-    def hittest(self, obj):
-        """Функция проверяет сталкивалкивается ли данный обьект с целью, описываемой в обьекте obj.
-
-        Args:
-            obj: Обьект, с которым проверяется столкновение.
-        Returns:
-            Возвращает True в случае столкновения мяча и цели. В противном случае возвращает False.
-        """
-        if (((obj.x-self.x)**2 + (obj.y - self.y)**2)**0.5 < obj.r + self.r):
-            return True
-        else:
-            return False
-
-class gun():
-    def __init__(self):
-        self.f2_power = 10
-        self.f2_on = 0
-        self.an = 1
-        self.id = canv.create_line(20,450,50,420,width=7) 
-
-    def fire2_start(self, event):
-        self.f2_on = 1
-
-    def fire2_end(self, event):
-        """Выстрел мячом.
-
-        Происходит при отпускании кнопки мыши.
-        Начальные значения компонент скорости мяча vx и vy зависят от положения мыши.
-        """
-        global balls, bullet
-        bullet += 1
-        new_ball = ball()
-        new_ball.r += 5
-        self.an = math.atan((event.y-new_ball.y) / (event.x-new_ball.x))
-        new_ball.vx = self.f2_power * math.cos(self.an)
-        new_ball.vy = - self.f2_power * math.sin(self.an)
-        balls += [new_ball]
-        self.f2_on = 0
-        self.f2_power = 10
-
-    def targetting(self, event=0):
-        """Прицеливание. Зависит от положения мыши."""
-        if event:
-            self.an = math.atan((event.y-450) / (event.x-20))
-        if self.f2_on:
-            canv.itemconfig(self.id, fill='orange')
-        else:
-            canv.itemconfig(self.id, fill='black')
-        canv.coords(self.id, 20, 450,
-                    20 + max(self.f2_power, 20) * math.cos(self.an),
-                    450 + max(self.f2_power, 20) * math.sin(self.an)
-                    )
-
-    def power_up(self):
-        if self.f2_on:
-            if self.f2_power < 100:
-                self.f2_power += 1
-            canv.itemconfig(self.id, fill='orange')
-        else:
-            canv.itemconfig(self.id, fill='black')
+        return done
 
 
-class target():
-    def __init__(self):
-        self.points = 0
-        self.live = 1
-        self.id = canv.create_oval(0,0,0,0)
-        self.id_points = canv.create_text(30,30,text = self.points,font = '28')
-        self.new_target()
+screen = pg.display.set_mode(SCREEN_SIZE)
+pg.display.set_caption("The gun of Khiryanov")
+clock = pg.time.Clock()
 
-    def new_target(self):
-        """ Инициализация новой цели. """
-        x = self.x = rnd(600, 780)
-        y = self.y = rnd(300, 550)
-        r = self.r = rnd(2, 50)
-        color = self.color = 'red'
-        canv.coords(self.id, x-r, y-r, x+r, y+r)
-        canv.itemconfig(self.id, fill=color)
+mgr = Manager()
 
-    def hit(self, points=1):
-        """Попадание шарика в цель."""
-        canv.coords(self.id, -10, -10, -10, -10)
-        self.points += points
-        canv.itemconfig(self.id_points, text=self.points)
+done = False
 
+while not done:
+    clock.tick(15)
 
-t1 = target()
-screen1 = canv.create_text(400, 300, text='', font='28')
-g1 = gun()
-bullet = 0
-balls = []
+    done = mgr.process(pg.event.get(), screen)
 
+    pg.display.flip()
 
-def new_game(event=''):
-    global gun, t1, screen1, balls, bullet
-    t1.new_target()
-    bullet = 0
-    balls = []
-    canv.bind('<Button-1>', g1.fire2_start)
-    canv.bind('<ButtonRelease-1>', g1.fire2_end)
-    canv.bind('<Motion>', g1.targetting)
-
-    z = 0.03
-    t1.live = 1
-    while t1.live or balls:
-        for b in balls:
-            b.move()
-            if b.hittest(t1) and t1.live:
-                t1.live = 0
-                t1.hit()
-                canv.bind('<Button-1>', '')
-                canv.bind('<ButtonRelease-1>', '')
-                canv.itemconfig(screen1, text='Вы уничтожили цель за ' + str(bullet) + ' выстрелов')
-        canv.update()
-        time.sleep(0.03)
-        g1.targetting()
-        g1.power_up()
-    canv.itemconfig(screen1, text='')
-    canv.delete(gun)
-    root.after(750, new_game)
-
-
-new_game()
-
-mainloop()
